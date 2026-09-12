@@ -81,7 +81,7 @@ fetch_size() {
     bytes=""
     case "$(conf_get downloader)" in
         curl) bytes=$(curl -sI "$url" | grep -i "^content-length:" | tr -d '\r' | awk '{print $2}') ;;
-        wget) bytes=$(wget --spider "$url" 2>&1 | grep -i "^Length:" | awk '{print $2}') ;;
+        wget) bytes=$(wget --spider "$url" 2>&1 | grep -i "length:" | grep -o '[0-9]*' | head -1) ;;
     esac
     [ -z "$bytes" ] && return
     if [ "$bytes" -ge 1048576 ] 2>/dev/null; then
