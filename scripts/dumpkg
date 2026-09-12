@@ -110,6 +110,7 @@ cmd_info() {
     [ -z "$1" ] && echo "usage: dumpkg info <package>" && exit 1
     pkg="$1"
     manifest="$INSTALLED_DIR/$pkg.manifest"
+    fileslist="$FILES_DIR/$pkg.files"
 
     if [ ! -f "$manifest" ]; then
         echo "error: '$pkg' doesn't look like it's installed."
@@ -119,6 +120,24 @@ cmd_info() {
     echo "local info for $pkg:"
     echo "---"
     cat "$manifest"
+
+    # calcula o tamanho total dos arquivos instalados
+    if [ -f "$fileslist" ]; then
+        total=0
+        while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            [ -f "/$file" ] || continue
+            size=$(wc -c < "/$file" 2>/dev/null)
+            total=$((total + size))
+        done < "$fileslist"
+        if [ "$total" -ge 1048576 ]; then
+            echo "installed size: $((total / 1048576)) MB"
+        elif [ "$total" -ge 1024 ]; then
+            echo "installed size: $((total / 1024)) KB"
+        else
+            echo "installed size: $total bytes"
+        fi
+    fi
 
     # avisa se tem versão nova disponível no repo
     binfile="$RECIPES_DIR/$pkg.binfile"
