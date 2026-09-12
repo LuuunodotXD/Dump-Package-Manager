@@ -127,7 +127,7 @@ upgrade_package() {
 
     remove_old_files "$pkg"
     rm -f "$manifest"
-    dumpkg-install "$pkg"
+    DUMPKG_INTERNAL=1 dumpkg-install "$pkg"
 
     # restaura os conffiles — o tarball novo pode ter sobrescrito com defaults
     for cf in $conffiles; do
