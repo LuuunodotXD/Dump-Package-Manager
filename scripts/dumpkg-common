@@ -81,7 +81,7 @@ fetch_size() {
     bytes=""
     case "$(conf_get downloader)" in
         curl) bytes=$(curl -sI "$url" | grep -i "^content-length:" | tr -d '\r' | awk '{print $2}') ;;
-        wget) bytes=$(wget -q -S --spider "$url" 2>&1 | grep -i "content-length:" | awk '{print $2}' | tr -d '\r') ;;
+        wget) ;; # busybox wget doesn't reliably report size without interfering with downloads
     esac
     [ -z "$bytes" ] && return
     if [ "$bytes" -ge 1048576 ] 2>/dev/null; then
