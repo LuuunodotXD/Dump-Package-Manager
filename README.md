@@ -12,8 +12,8 @@ Works through recipes (`.binfile`), with no dependency resolution — deps are l
 ## installation
 
 ```sh
-git clone https://github.com/you/dumpkg
-cd dumpkg
+git clone https://github.com/LuuunodotXD/Dump-Package-Manager.git
+cd Dump-Package-Manager
 sh install.sh
 dumpkg-init
 ```
