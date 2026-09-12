@@ -1,0 +1,98 @@
+#!/bin/sh
+# dumpkg-common — funções e variáveis compartilhadas entre os scripts do dumpkg
+# não execute diretamente, é carregado via: . /usr/share/dumpkg/dumpkg-common
+
+# shellcheck disable=SC2034
+CONF_DIR="/etc/dumpkg"
+DATA_DIR="/usr/dumpkg"
+CONF_FILE="$CONF_DIR/dumpkg.conf"
+RECIPES_DIR="$DATA_DIR/recipes"
+INSTALLED_DIR="$DATA_DIR/installed"
+FILES_DIR="$DATA_DIR/files"
+LOCK_FILE="/tmp/dumpkg.lock"
+LOG_FILE="/var/log/dumpkg.log"
+
+# se não achar os arquivos de config, pede pro usuário rodar o init
+check_setup() {
+    if [ ! -f "$CONF_FILE" ] || [ ! -d "$DATA_DIR" ]; then
+        echo "error: dumpkg doesn't look like it's set up yet."
+        echo "run 'dumpkg-init' to get started."
+        exit 1
+    fi
+}
+
+# lê um valor do dumpkg.conf
+conf_get() {
+    grep "^$1=" "$CONF_FILE" | cut -d= -f2
+}
+
+# baixa um arquivo usando o downloader configurado
+download() {
+    url="$1"
+    dest="$2"
+    case "$(conf_get downloader)" in
+        curl) curl -fsSL -o "$dest" "$url" ;;
+        wget) wget -q -O "$dest" "$url" ;;
+        *) echo "error: unknown downloader in config. use 'curl' or 'wget'."; exit 1 ;;
+    esac
+}
+
+# verifica o checksum do arquivo baixado
+verify_checksum() {
+    file="$1"
+    expected="$2"
+    case "$(conf_get checksum)" in
+        none)   return 0 ;;
+        md5)    actual=$(md5sum "$file" | cut -d' ' -f1) ;;
+        sha256) actual=$(sha256sum "$file" | cut -d' ' -f1) ;;
+        *) echo "error: unknown checksum method in config."; exit 1 ;;
+    esac
+    if [ "$actual" != "$expected" ]; then
+        echo "error: checksum mismatch!"
+        echo "  expected: $expected"
+        echo "  got:      $actual"
+        return 1
+    fi
+    return 0
+}
+
+# garante que só um processo do dumpkg roda por vez
+acquire_lock() {
+    if [ -f "$LOCK_FILE" ]; then
+        old_pid=$(cat "$LOCK_FILE")
+        if kill -0 "$old_pid" 2>/dev/null; then
+            echo "error: another dumpkg process is already running (pid $old_pid)."
+            echo "if you're sure nothing is running, remove $LOCK_FILE and try again."
+            exit 1
+        else
+            # processo morreu e deixou o lock pra trás, limpa
+            echo "warning: stale lock file found, cleaning up."
+            rm -f "$LOCK_FILE"
+        fi
+    fi
+    echo $$ > "$LOCK_FILE"
+    trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
+}
+
+# tenta buscar o tamanho do download antes de baixar
+fetch_size() {
+    url="$1"
+    bytes=""
+    case "$(conf_get downloader)" in
+        curl) bytes=$(curl -sI "$url" | grep -i "^content-length:" | tr -d '\r' | awk '{print $2}') ;;
+        wget) bytes=$(wget --spider "$url" 2>&1 | grep -i "^Length:" | awk '{print $2}') ;;
+    esac
+    [ -z "$bytes" ] && return
+    if [ "$bytes" -ge 1048576 ] 2>/dev/null; then
+        echo "$((bytes / 1048576)) MB"
+    elif [ "$bytes" -ge 1024 ] 2>/dev/null; then
+        echo "$((bytes / 1024)) KB"
+    else
+        echo "$bytes bytes"
+    fi
+}
+
+# registra uma ação no log
+log_action() {
+    printf "[%s] %s\n" "$(date -u +"%Y-%m-%dT%H:%M:%S")" "$*" >> "$LOG_FILE"
+}

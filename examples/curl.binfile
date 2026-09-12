@@ -1,0 +1,14 @@
+# exemplo de binfile — fica em /usr/dumpkg/recipes/curl.binfile
+# campos md5 e sha256 ficam sempre aqui, mesmo que um deles não seja usado
+# o dumpkg usa só o que estiver configurado no dumpkg.conf
+
+name=curl
+version=8.11.0
+description=A command-line tool for transferring data with URLs
+url=https://example.com/packages/curl-8.11.0.tar.gz
+compression=gzip
+md5=d41d8cd98f00b204e9800998ecf8427e
+sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+deps=zlib openssl ca-certificates
+postinstall=ldconfig
+conffiles=/etc/curl/curlrc

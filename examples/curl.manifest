@@ -1,0 +1,11 @@
+# exemplo de manifest — fica em /usr/dumpkg/installed/curl.manifest
+# gerado automaticamente pelo dumpkg-install, não edite à mão
+# não inclui deps — isso fica só no binfile do repo
+
+name=curl
+version=8.11.0
+description=A command-line tool for transferring data with URLs
+md5=d41d8cd98f00b204e9800998ecf8427e
+sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+conffiles=/etc/curl/curlrc
+installed_at=2025-09-11T14:32:00

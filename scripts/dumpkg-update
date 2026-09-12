@@ -1,0 +1,233 @@
+#!/bin/sh
+# dumpkg-update — sincroniza receitas e atualiza pacotes instalados
+
+. /usr/share/dumpkg/dumpkg-common
+
+TMP_DIR="/tmp/dumpkg-update-$$"
+
+# sincroniza as receitas do repo (sobrescreve as existentes)
+sync_recipes() {
+    recipes_url=$(conf_get recipes_url)
+    checksum_method=$(conf_get checksum)
+
+    echo "syncing recipes..."
+    mkdir -p "$TMP_DIR"
+
+    download "$recipes_url" "$TMP_DIR/recipes.tar.gz" || {
+        echo "error: failed to download recipes."
+        rm -rf "$TMP_DIR"
+        log_action "sync recipes: failed (download error)"
+        exit 1
+    }
+
+    if [ "$checksum_method" != "none" ]; then
+        download "${recipes_url}.${checksum_method}" "$TMP_DIR/recipes.checksum" || {
+            echo "error: failed to download the recipes checksum file."
+            rm -rf "$TMP_DIR"
+            log_action "sync recipes: failed (checksum download error)"
+            exit 1
+        }
+        expected=$(cut -d' ' -f1 < "$TMP_DIR/recipes.checksum")
+        echo "verifying recipes..."
+        verify_checksum "$TMP_DIR/recipes.tar.gz" "$expected" || {
+            rm -rf "$TMP_DIR"
+            log_action "sync recipes: failed (checksum mismatch)"
+            exit 1
+        }
+    fi
+
+    tar -xzf "$TMP_DIR/recipes.tar.gz" -C "$RECIPES_DIR" || {
+        echo "error: failed to extract recipes."
+        rm -rf "$TMP_DIR"
+        log_action "sync recipes: failed (extraction error)"
+        exit 1
+    }
+
+    rm -rf "$TMP_DIR"
+    log_action "sync recipes: ok"
+    echo "recipes synced."
+}
+
+# remove os arquivos antigos do pacote, preservando os conffiles
+remove_old_files() {
+    pkg="$1"
+    fileslist="$FILES_DIR/$pkg.files"
+    manifest="$INSTALLED_DIR/$pkg.manifest"
+
+    [ ! -f "$fileslist" ] && return
+
+    # lê conffiles do manifest da versão instalada, não do binfile novo
+    conffiles=""
+    [ -f "$manifest" ] && conffiles=$(grep "^conffiles=" "$manifest" | cut -d= -f2)
+
+    # remove os arquivos do pacote, pulando os conffiles
+    while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        skip=0
+        for cf in $conffiles; do
+            cf_norm=$(echo "$cf" | sed 's|^/||')
+            if [ "$file" = "$cf_norm" ]; then
+                skip=1
+                break
+            fi
+        done
+        [ "$skip" -eq 1 ] && continue
+        target="/$file"
+        [ -f "$target" ] && rm -f "$target"
+    done < "$fileslist"
+
+    # tenta limpar diretórios vazios que sobraram
+    sort -r "$fileslist" | while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        target="/$file"
+        [ -d "$target" ] && rmdir "$target" 2>/dev/null
+    done
+
+    rm -f "$fileslist"
+}
+
+# atualiza um pacote específico comparando versões
+upgrade_package() {
+    pkg="$1"
+    manifest="$INSTALLED_DIR/$pkg.manifest"
+    binfile="$RECIPES_DIR/$pkg.binfile"
+
+    if [ ! -f "$manifest" ]; then
+        echo "error: '$pkg' is not installed."
+        return 1
+    fi
+
+    if [ ! -f "$binfile" ]; then
+        echo "warning: no recipe found for '$pkg', skipping."
+        return 1
+    fi
+
+    installed_ver=$(grep "^version=" "$manifest" | cut -d= -f2)
+    repo_ver=$(grep "^version=" "$binfile" | cut -d= -f2)
+
+    if [ "$installed_ver" = "$repo_ver" ]; then
+        echo "$pkg is already up to date ($repo_ver)."
+        return 0
+    fi
+
+    echo "upgrading $pkg: $installed_ver -> $repo_ver"
+
+    # lê os conffiles do manifest ANTES de remover qualquer coisa
+    conffiles=$(grep "^conffiles=" "$manifest" | cut -d= -f2)
+    backup_dir="/tmp/dumpkg-conf-$$"
+
+    # faz backup dos conffiles que existirem no sistema
+    for cf in $conffiles; do
+        cf_norm=$(echo "$cf" | sed 's|^/||')
+        [ ! -f "/$cf_norm" ] && continue
+        dest="$backup_dir/$cf_norm"
+        mkdir -p "$(dirname "$dest")"
+        cp "/$cf_norm" "$dest"
+    done
+
+    remove_old_files "$pkg"
+    rm -f "$manifest"
+    dumpkg-install "$pkg"
+
+    # restaura os conffiles — o tarball novo pode ter sobrescrito com defaults
+    for cf in $conffiles; do
+        cf_norm=$(echo "$cf" | sed 's|^/||')
+        [ -f "$backup_dir/$cf_norm" ] && cp "$backup_dir/$cf_norm" "/$cf_norm"
+    done
+
+    rm -rf "$backup_dir"
+    log_action "upgrade $pkg $installed_ver -> $repo_ver: ok"
+}
+
+# atualiza todos os pacotes instalados, com resumo e confirmação antes
+upgrade_all() {
+    if ! ls "$INSTALLED_DIR"/*.manifest >/dev/null 2>&1; then
+        echo "no packages installed, nothing to upgrade."
+        return
+    fi
+
+    # monta a lista do que vai ser atualizado antes de fazer qualquer coisa
+    to_upgrade=""
+    for manifest in "$INSTALLED_DIR"/*.manifest; do
+        pkg=$(grep "^name=" "$manifest" | cut -d= -f2)
+        installed_ver=$(grep "^version=" "$manifest" | cut -d= -f2)
+        binfile="$RECIPES_DIR/$pkg.binfile"
+        [ ! -f "$binfile" ] && continue
+        repo_ver=$(grep "^version=" "$binfile" | cut -d= -f2)
+        [ "$installed_ver" = "$repo_ver" ] && continue
+        to_upgrade="$to_upgrade $pkg"
+        printf "  %-24s %s -> %s\n" "$pkg" "$installed_ver" "$repo_ver"
+    done
+
+    if [ -z "$to_upgrade" ]; then
+        echo "everything is up to date."
+        return
+    fi
+
+    echo ""
+    printf "upgrade these packages? [y/N] "
+    read -r answer
+    case "$answer" in
+        y|Y) ;;
+        *) echo "nothing was upgraded."; return ;;
+    esac
+
+    echo ""
+    for pkg in $to_upgrade; do
+        upgrade_package "$pkg"
+    done
+
+    echo ""
+    echo "all done."
+}
+
+# ——————————————————
+# ponto de entrada
+# ——————————————————
+
+check_setup
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "error: you need to be root to update the system."
+    exit 1
+fi
+
+acquire_lock
+
+case "$1" in
+    --up-to-date|-u)
+        # só sincroniza as receitas, não mexe nos pacotes
+        sync_recipes
+        ;;
+    --upgrade|-U)
+        # atualiza um pacote específico ou todos
+        if [ -n "$2" ]; then
+            upgrade_package "$2"
+        else
+            upgrade_all
+        fi
+        ;;
+    "")
+        # sem argumento: faz os dois — sincroniza e depois atualiza
+        sync_recipes
+        upgrade_all
+        ;;
+    -*)
+        echo "unknown option: $1"
+        echo ""
+        echo "usage: dumpkg-update [option] [package]"
+        echo ""
+        echo "options:"
+        echo "  (none)                 sync recipes and upgrade all packages"
+        echo "  <pkg>                  sync recipes and upgrade a specific package"
+        echo "  --up-to-date, -u       sync recipes only"
+        echo "  --upgrade,    -U       upgrade all installed packages"
+        echo "  --upgrade,    -U <pkg> upgrade a specific package"
+        exit 1
+        ;;
+    *)
+        # nome de pacote direto: sincroniza e atualiza só ele
+        sync_recipes
+        upgrade_package "$1"
+        ;;
+esac

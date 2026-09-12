@@ -1,0 +1,10 @@
+# exemplo de .files — fica em /usr/dumpkg/files/curl.files
+# gerado automaticamente pelo dumpkg-install via 'tar -tzf'
+# usado pelo dumpkg-remove e dumpkg-update pra saber o que apagar
+# caminhos sem a barra inicial — o script adiciona / na hora de remover
+
+usr/bin/curl
+usr/lib/libcurl.so.4
+usr/lib/libcurl.so.4.8.0
+usr/share/man/man1/curl.1
+etc/curl/curlrc

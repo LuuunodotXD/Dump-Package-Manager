@@ -1,0 +1,67 @@
+#!/bin/sh
+# dumpkg-remove — remove um ou mais pacotes e limpa seus arquivos do sistema
+
+. /usr/share/dumpkg/dumpkg-common
+
+# remove um único pacote — chamado em loop pra múltiplos
+remove_package() {
+    pkg="$1"
+    manifest="$INSTALLED_DIR/$pkg.manifest"
+    fileslist="$FILES_DIR/$pkg.files"
+
+    if [ ! -f "$manifest" ]; then
+        echo "error: '$pkg' doesn't seem to be installed."
+        return 1
+    fi
+
+    version=$(grep "^version=" "$manifest" | cut -d= -f2)
+    echo "removing $pkg $version..."
+
+    if [ ! -f "$fileslist" ]; then
+        echo "warning: no file list found for '$pkg'."
+        echo "can't remove files, but will clean up the manifests."
+    else
+        # remove os arquivos regulares do pacote
+        while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            target="/$file"
+            [ -f "$target" ] && rm -f "$target"
+        done < "$fileslist"
+
+        # tenta limpar diretórios vazios que sobraram (sem forçar)
+        sort -r "$fileslist" | while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            target="/$file"
+            [ -d "$target" ] && rmdir "$target" 2>/dev/null
+        done
+    fi
+
+    rm -f "$manifest"
+    rm -f "$fileslist"
+
+    log_action "remove $pkg $version: ok"
+    echo "$pkg removed."
+    return 0
+}
+
+# ——————————————————
+# ponto de entrada
+# ——————————————————
+
+check_setup
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "error: you need to be root to remove packages."
+    exit 1
+fi
+
+[ -z "$1" ] && echo "usage: dumpkg-remove <package> [package...]" && exit 1
+
+acquire_lock
+
+failed=0
+for pkg in "$@"; do
+    remove_package "$pkg" || failed=$((failed + 1))
+done
+
+[ "$failed" -gt 0 ] && echo "$failed package(s) failed to remove."

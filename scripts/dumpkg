@@ -1,0 +1,236 @@
+#!/bin/sh
+# dumpkg — consulta pacotes, versões, dependências e arquivos
+
+. /usr/share/dumpkg/dumpkg-common
+
+# lista todos os pacotes instalados com versão e quantidade total
+cmd_list() {
+    if ! ls "$INSTALLED_DIR"/*.manifest >/dev/null 2>&1; then
+        echo "no packages installed yet."
+        return
+    fi
+
+    # --upgradable: mostra só os pacotes com versão nova no repo
+    if [ "$1" = "--upgradable" ]; then
+        if ! ls "$RECIPES_DIR"/*.binfile >/dev/null 2>&1; then
+            echo "no recipes found. run 'dumpkg-update' to fetch them."
+            return
+        fi
+        found=0
+        for manifest in "$INSTALLED_DIR"/*.manifest; do
+            name=$(grep "^name=" "$manifest" | cut -d= -f2)
+            installed_ver=$(grep "^version=" "$manifest" | cut -d= -f2)
+            binfile="$RECIPES_DIR/$name.binfile"
+            [ ! -f "$binfile" ] && continue
+            repo_ver=$(grep "^version=" "$binfile" | cut -d= -f2)
+            [ "$installed_ver" = "$repo_ver" ] && continue
+            printf "%-24s %s -> %s\n" "$name" "$installed_ver" "$repo_ver"
+            found=$((found + 1))
+        done
+        [ "$found" -eq 0 ] && echo "everything is up to date." && return
+        echo ""
+        echo "$found package(s) can be upgraded"
+        return
+    fi
+
+    count=0
+    for manifest in "$INSTALLED_DIR"/*.manifest; do
+        name=$(grep "^name=" "$manifest" | cut -d= -f2)
+        version=$(grep "^version=" "$manifest" | cut -d= -f2)
+        printf "%-24s %s\n" "$name" "$version"
+        count=$((count + 1))
+    done
+    echo ""
+    echo "$count package(s) installed"
+}
+
+# pesquisa pacotes no repo por substring no nome (case-insensitive)
+cmd_search() {
+    [ -z "$1" ] && echo "usage: dumpkg search <package>" && exit 1
+    query="$1"
+
+    if ! ls "$RECIPES_DIR"/*.binfile >/dev/null 2>&1; then
+        echo "no recipes found. run 'dumpkg-update' to fetch them."
+        return
+    fi
+
+    found=0
+    for binfile in "$RECIPES_DIR"/*.binfile; do
+        name=$(grep "^name=" "$binfile" | cut -d= -f2)
+        echo "$name" | grep -qi "$query" || continue
+        found=1
+
+        version=$(grep "^version=" "$binfile" | cut -d= -f2)
+        description=$(grep "^description=" "$binfile" | cut -d= -f2)
+        url=$(grep "^url=" "$binfile" | cut -d= -f2)
+        deps=$(grep "^deps=" "$binfile" | cut -d= -f2)
+
+        if [ -f "$INSTALLED_DIR/$name.manifest" ]; then
+            installed="yes"
+        else
+            installed="no"
+        fi
+
+        printf "name:        %s\n" "$name"
+        printf "version:     %s\n" "$version"
+        printf "description: %s\n" "$description"
+        printf "url:         %s\n" "$url"
+        printf "deps:        %s\n" "${deps:-none}"
+        printf "installed:   %s\n" "$installed"
+        echo ""
+    done
+
+    [ "$found" -eq 0 ] && echo "no packages found matching '$query'."
+}
+
+# lista dependências de um pacote (só informativo, não instala)
+cmd_deps() {
+    [ -z "$1" ] && echo "usage: dumpkg deps <package>" && exit 1
+    pkg="$1"
+    binfile="$RECIPES_DIR/$pkg.binfile"
+
+    if [ ! -f "$binfile" ]; then
+        echo "error: no recipe found for '$pkg'. it might not exist in the repo."
+        exit 1
+    fi
+
+    deps=$(grep "^deps=" "$binfile" | cut -d= -f2)
+    if [ -z "$deps" ]; then
+        echo "$pkg has no listed dependencies."
+    else
+        echo "dependencies of $pkg:"
+        for dep in $deps; do
+            echo "  $dep"
+        done
+    fi
+}
+
+# exibe informações locais de um pacote instalado e avisa se tem update
+cmd_info() {
+    [ -z "$1" ] && echo "usage: dumpkg info <package>" && exit 1
+    pkg="$1"
+    manifest="$INSTALLED_DIR/$pkg.manifest"
+
+    if [ ! -f "$manifest" ]; then
+        echo "error: '$pkg' doesn't look like it's installed."
+        exit 1
+    fi
+
+    echo "local info for $pkg:"
+    echo "---"
+    cat "$manifest"
+
+    # avisa se tem versão nova disponível no repo
+    binfile="$RECIPES_DIR/$pkg.binfile"
+    if [ -f "$binfile" ]; then
+        installed_ver=$(grep "^version=" "$manifest" | cut -d= -f2)
+        repo_ver=$(grep "^version=" "$binfile" | cut -d= -f2)
+        if [ "$installed_ver" != "$repo_ver" ]; then
+            echo ""
+            echo "update available: $installed_ver -> $repo_ver"
+        fi
+    fi
+}
+
+# verifica se todos os arquivos do pacote ainda estão no sistema
+cmd_verify() {
+    [ -z "$1" ] && echo "usage: dumpkg verify <package>" && exit 1
+    pkg="$1"
+    manifest="$INSTALLED_DIR/$pkg.manifest"
+    fileslist="$FILES_DIR/$pkg.files"
+
+    if [ ! -f "$manifest" ]; then
+        echo "error: '$pkg' doesn't look like it's installed."
+        exit 1
+    fi
+
+    if [ ! -f "$fileslist" ]; then
+        echo "error: no file list found for '$pkg'."
+        exit 1
+    fi
+
+    missing=0
+    while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        if [ ! -e "/$file" ]; then
+            echo "missing: /$file"
+            missing=$((missing + 1))
+        fi
+    done < "$fileslist"
+
+    if [ "$missing" -eq 0 ]; then
+        echo "$pkg looks good — all files are present."
+    else
+        echo "$missing file(s) missing from $pkg."
+    fi
+}
+
+# lista os arquivos que pertencem a um pacote instalado
+cmd_files() {
+    [ -z "$1" ] && echo "usage: dumpkg files <package>" && exit 1
+    pkg="$1"
+    fileslist="$FILES_DIR/$pkg.files"
+
+    if [ ! -f "$fileslist" ]; then
+        echo "error: no file list found for '$pkg'. is it installed?"
+        exit 1
+    fi
+
+    echo "files owned by $pkg:"
+    cat "$fileslist"
+}
+
+# remove arquivos temporários e lock files mortos
+cmd_clean() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "error: you need to be root to run clean."
+        exit 1
+    fi
+
+    removed=0
+
+    # remove diretórios temporários que podem ter sobrado de uma execução interrompida
+    for d in /tmp/dumpkg-* /tmp/dumpkg-update-*; do
+        [ -e "$d" ] && rm -rf "$d" && removed=$((removed + 1))
+    done
+
+    # remove lock file se o processo já não existe mais
+    if [ -f "$LOCK_FILE" ]; then
+        old_pid=$(cat "$LOCK_FILE")
+        if kill -0 "$old_pid" 2>/dev/null; then
+            echo "lock file is held by pid $old_pid (still running), leaving it alone."
+        else
+            rm -f "$LOCK_FILE"
+            echo "removed stale lock file (pid $old_pid was not running)."
+            removed=$((removed + 1))
+        fi
+    fi
+
+    [ "$removed" -eq 0 ] && echo "nothing to clean." || echo "done."
+}
+
+check_setup
+
+case "$1" in
+    list)    cmd_list "$2" ;;
+    search)  cmd_search "$2" ;;
+    deps)    cmd_deps "$2" ;;
+    info)    cmd_info "$2" ;;
+    verify)  cmd_verify "$2" ;;
+    files)   cmd_files "$2" ;;
+    clean)   cmd_clean ;;
+    *)
+        echo "usage: dumpkg <command> [package]"
+        echo ""
+        echo "commands:"
+        echo "  list                  list all installed packages and versions"
+        echo "  list --upgradable     list packages with a newer version available"
+        echo "  search <pkg>          search for a package in the repo (substring match)"
+        echo "  deps <pkg>            show the dependencies of a package"
+        echo "  info <pkg>            show local info for an installed package"
+        echo "  verify <pkg>          check if all files of a package are present"
+        echo "  files <pkg>           list files owned by an installed package"
+        echo "  clean                 remove leftover temp files and stale lock"
+        exit 1
+        ;;
+esac

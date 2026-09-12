@@ -1,0 +1,190 @@
+#!/bin/sh
+# dumpkg-install — baixa, verifica e instala um ou mais pacotes binários
+
+. /usr/share/dumpkg/dumpkg-common
+
+TMP_DIR="/tmp/dumpkg-$$"
+
+# retorna as flags de tar corretas pra cada tipo de compressão
+tar_flags() {
+    case "${1:-gzip}" in
+        gzip)  echo "z" ;;
+        bzip2) echo "j" ;;
+        xz)    echo "J" ;;
+        *) echo "error: unknown compression '$1'. use gzip, bzip2 or xz." >&2; return 1 ;;
+    esac
+}
+
+# instala um único pacote — chamado em loop pra múltiplos
+install_package() {
+    pkg="$1"
+    reinstall="$2"
+    binfile="$RECIPES_DIR/$pkg.binfile"
+
+    if [ ! -f "$binfile" ]; then
+        echo "error: no recipe found for '$pkg'."
+        echo "try running 'dumpkg-update' to sync the latest recipes."
+        log_action "install $pkg: failed (no recipe found)"
+        return 1
+    fi
+
+    name=$(grep "^name=" "$binfile" | cut -d= -f2)
+    version=$(grep "^version=" "$binfile" | cut -d= -f2)
+    description=$(grep "^description=" "$binfile" | cut -d= -f2)
+    url=$(grep "^url=" "$binfile" | cut -d= -f2)
+    md5=$(grep "^md5=" "$binfile" | cut -d= -f2)
+    sha256=$(grep "^sha256=" "$binfile" | cut -d= -f2)
+    postinstall=$(grep "^postinstall=" "$binfile" | cut -d= -f2)
+    conffiles=$(grep "^conffiles=" "$binfile" | cut -d= -f2)
+    compression=$(grep "^compression=" "$binfile" | cut -d= -f2)
+    compression="${compression:-gzip}"
+
+    cflag=$(tar_flags "$compression") || return 1
+
+    # variáveis pra restauração de conffiles no reinstall
+    old_conffiles=""
+    backup_dir="/tmp/dumpkg-conf-$$-$pkg"
+
+    # checa se já está instalado
+    if [ -f "$INSTALLED_DIR/$pkg.manifest" ]; then
+        if [ "$reinstall" = "1" ]; then
+            echo "reinstalling $name..."
+
+            # backup dos conffiles antes de remover
+            old_conffiles=$(grep "^conffiles=" "$INSTALLED_DIR/$pkg.manifest" | cut -d= -f2)
+            for cf in $old_conffiles; do
+                cf_norm=$(echo "$cf" | sed 's|^/||')
+                [ ! -f "/$cf_norm" ] && continue
+                dest="$backup_dir/$cf_norm"
+                mkdir -p "$(dirname "$dest")"
+                cp "/$cf_norm" "$dest"
+            done
+
+            # remove os arquivos da instalação atual
+            fileslist="$FILES_DIR/$pkg.files"
+            if [ -f "$fileslist" ]; then
+                while IFS= read -r file; do
+                    [ -z "$file" ] && continue
+                    [ -f "/$file" ] && rm -f "/$file"
+                done < "$fileslist"
+                sort -r "$fileslist" | while IFS= read -r file; do
+                    [ -z "$file" ] && continue
+                    [ -d "/$file" ] && rmdir "/$file" 2>/dev/null
+                done
+            fi
+            rm -f "$INSTALLED_DIR/$pkg.manifest" "$FILES_DIR/$pkg.files"
+        else
+            installed_ver=$(grep "^version=" "$INSTALLED_DIR/$pkg.manifest" | cut -d= -f2)
+            echo "error: '$pkg' is already installed (version $installed_ver)."
+            echo "to upgrade it, use:   dumpkg-update --upgrade $pkg"
+            echo "to reinstall it, use: dumpkg-install --reinstall $pkg"
+            return 1
+        fi
+    fi
+
+    [ "$reinstall" != "1" ] && echo "installing $name $version..."
+    mkdir -p "$TMP_DIR"
+    tarball="$TMP_DIR/$pkg.tar.gz"
+
+    size=$(fetch_size "$url")
+    [ -n "$size" ] && echo "size: $size"
+    echo "downloading..."
+    download "$url" "$tarball" || {
+        echo "error: download failed."
+        rm -rf "$TMP_DIR" "$backup_dir"
+        log_action "install $name $version: failed (download error)"
+        return 1
+    }
+
+    checksum_method=$(conf_get checksum)
+    case "$checksum_method" in
+        md5)    expected_sum="$md5" ;;
+        sha256) expected_sum="$sha256" ;;
+        none)   expected_sum="" ;;
+    esac
+
+    if [ "$checksum_method" != "none" ]; then
+        echo "verifying..."
+        verify_checksum "$tarball" "$expected_sum" || {
+            rm -rf "$TMP_DIR" "$backup_dir"
+            log_action "install $name $version: failed (checksum mismatch)"
+            return 1
+        }
+    fi
+
+    echo "extracting..."
+    tar "-t${cflag}f" "$tarball" \
+        | sed 's|^\./||' \
+        | grep -v '^$' \
+        | grep -v '^/$' \
+        > "$FILES_DIR/$pkg.files"
+
+    tar "-x${cflag}f" "$tarball" -C / || {
+        echo "error: extraction failed. the package might be corrupted."
+        rm -rf "$TMP_DIR" "$backup_dir"
+        rm -f "$FILES_DIR/$pkg.files"
+        log_action "install $name $version: failed (extraction error)"
+        return 1
+    }
+
+    if [ -n "$postinstall" ]; then
+        echo "running post-install..."
+        sh -c "$postinstall" || echo "warning: post-install failed, but the package is installed."
+    fi
+
+    # restaura conffiles se foi reinstall
+    if [ -n "$old_conffiles" ] && [ -d "$backup_dir" ]; then
+        for cf in $old_conffiles; do
+            cf_norm=$(echo "$cf" | sed 's|^/||')
+            [ -f "$backup_dir/$cf_norm" ] && cp "$backup_dir/$cf_norm" "/$cf_norm"
+        done
+        rm -rf "$backup_dir"
+    fi
+
+    installed_at=$(date -u +"%Y-%m-%dT%H:%M:%S")
+    cat > "$INSTALLED_DIR/$pkg.manifest" << MANIFEST
+name=$name
+version=$version
+description=$description
+md5=$md5
+sha256=$sha256
+conffiles=$conffiles
+installed_at=$installed_at
+MANIFEST
+
+    rm -rf "$TMP_DIR"
+    log_action "install $name $version: ok"
+    echo "$name $version installed."
+    return 0
+}
+
+# ——————————————————
+# ponto de entrada
+# ——————————————————
+
+check_setup
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "error: you need to be root to install packages."
+    exit 1
+fi
+
+# detecta flag de reinstall antes de processar os pacotes
+reinstall=0
+case "$1" in
+    --reinstall|-r)
+        reinstall=1
+        shift
+        ;;
+esac
+
+[ -z "$1" ] && echo "usage: dumpkg-install [--reinstall|-r] <package> [package...]" && exit 1
+
+acquire_lock
+
+failed=0
+for pkg in "$@"; do
+    install_package "$pkg" "$reinstall" || failed=$((failed + 1))
+done
+
+[ "$failed" -gt 0 ] && echo "$failed package(s) failed to install."

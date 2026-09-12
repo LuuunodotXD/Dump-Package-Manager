@@ -1,0 +1,95 @@
+#!/bin/sh
+# dumpkg-init — cria ou restaura toda a estrutura do dumpkg do zero
+# rode isso quando for usar em um sistema novo, ou se as configs derem problema
+
+CONF_DIR="/etc/dumpkg"
+DATA_DIR="/usr/dumpkg"
+CONF_FILE="$CONF_DIR/dumpkg.conf"
+INFO_FILE="$CONF_DIR/info-dumpkg"
+RECIPES_DIR="$DATA_DIR/recipes"
+INSTALLED_DIR="$DATA_DIR/installed"
+FILES_DIR="$DATA_DIR/files"
+
+DUMPKG_VERSION="0.1"
+
+# só root pode tocar nisso
+if [ "$(id -u)" -ne 0 ]; then
+    echo "error: you need to be root to run dumpkg-init."
+    exit 1
+fi
+
+# checa se já tem alguma coisa configurada
+already_set_up=0
+if [ -f "$CONF_FILE" ] || [ -d "$DATA_DIR" ]; then
+    already_set_up=1
+fi
+
+if [ "$already_set_up" -eq 1 ]; then
+    echo "warning: dumpkg is already set up."
+    echo "running this will wipe all configs and recipes."
+    echo "your system packages won't be touched, but dumpkg's own data will be gone."
+    printf "are you sure you want to continue? [y/N] "
+    read -r answer
+    case "$answer" in
+        y|Y) ;;
+        *) echo "nothing was changed. take your time."; exit 0 ;;
+    esac
+
+    echo ""
+    echo "warning: last chance — this is permanent."
+    echo "all configs and recipes will be erased after this."
+    printf "really continue? [y/N] "
+    read -r answer
+    case "$answer" in
+        y|Y) ;;
+        *) echo "nothing was changed. good call."; exit 0 ;;
+    esac
+else
+    echo "dumpkg isn't set up yet."
+    echo "this will create the directory structure and default config files."
+    printf "continue? [y/N] "
+    read -r answer
+    case "$answer" in
+        y|Y) ;;
+        *) echo "nothing was done."; exit 0 ;;
+    esac
+fi
+
+echo ""
+echo "setting things up..."
+
+# limpa o que havia antes
+rm -rf "$CONF_DIR" "$DATA_DIR"
+
+# cria a estrutura de diretórios
+mkdir -p "$CONF_DIR" "$RECIPES_DIR" "$INSTALLED_DIR" "$FILES_DIR" /usr/share/dumpkg
+
+# garante que o log existe (scripts vão appendar nele)
+touch /var/log/dumpkg.log
+
+# cria o dumpkg.conf com valores padrão já preenchidos
+cat > "$CONF_FILE" << 'EOF'
+# dumpkg configuration file
+# edit this to fit your setup
+
+# url to fetch the recipes tarball from
+recipes_url=https://example.com/recipes.tar.gz
+
+# checksum verification: none, md5, sha256
+checksum=md5
+
+# which downloader to use: curl, wget
+downloader=wget
+EOF
+
+# cria o info-dumpkg com a versão atual
+cat > "$INFO_FILE" << EOF
+version=$DUMPKG_VERSION
+EOF
+
+echo "all done! dumpkg is ready to go."
+echo ""
+echo "next steps:"
+echo "  1. edit $CONF_FILE and set your recipes_url"
+echo "  2. run 'dumpkg-update' to fetch the package recipes"
+echo "  3. install packages with 'dumpkg-install <package>'"
