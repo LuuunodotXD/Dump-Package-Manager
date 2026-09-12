@@ -169,11 +169,15 @@ cmd_verify() {
     fi
 
     missing=0
+    total=0
     while IFS= read -r file; do
         [ -z "$file" ] && continue
         if [ ! -e "/$file" ]; then
             echo "missing: /$file"
             missing=$((missing + 1))
+        elif [ -f "/$file" ]; then
+            size=$(wc -c < "/$file" 2>/dev/null)
+            total=$((total + size))
         fi
     done < "$fileslist"
 
@@ -181,6 +185,14 @@ cmd_verify() {
         echo "$pkg looks good — all files are present."
     else
         echo "$missing file(s) missing from $pkg."
+    fi
+
+    if [ "$total" -ge 1048576 ]; then
+        echo "installed size: $((total / 1048576)) MB"
+    elif [ "$total" -ge 1024 ]; then
+        echo "installed size: $((total / 1024)) KB"
+    else
+        echo "installed size: $total bytes"
     fi
 }
 
