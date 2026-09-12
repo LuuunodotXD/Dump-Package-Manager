@@ -73,7 +73,7 @@ cat > "$CONF_FILE" << 'EOF'
 # edit this to fit your setup
 
 # url to fetch the recipes tarball from
-recipes_url=https://example.com/recipes.tar.gz
+recipes_url=https://raw.githubusercontent.com/LuuunodotXD/Dump-Package-Recipes/main/tarball/recipes.tar.gz
 
 # checksum verification: none, md5, sha256
 checksum=md5
