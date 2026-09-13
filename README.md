@@ -23,7 +23,7 @@ dumpkg-init
 `/etc/dumpkg/dumpkg.conf`:
 
 ```sh
-recipes_url=https://example.com/recipes.tar.gz
+recipes_url=https://raw.githubusercontent.com/LuuunodotXD/Dump-Package-Recipes/main/tarball/recipes.tar.gz
 checksum=md5        # none, md5, sha256
 downloader=wget     # wget, curl
 ```
