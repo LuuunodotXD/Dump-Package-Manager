@@ -5,6 +5,9 @@
 
 TMP_DIR="/tmp/dumpkg-$$"
 
+# fila global de instalação usada pelo --depinst
+INSTALL_QUEUE=""
+
 # retorna as flags de tar corretas pra cada tipo de compressão
 tar_flags() {
     case "${1:-gzip}" in
@@ -13,6 +16,43 @@ tar_flags() {
         xz)    echo "J" ;;
         *) echo "error: unknown compression '$1'. use gzip, bzip2 or xz." >&2; return 1 ;;
     esac
+}
+
+# resolve deps recursivamente e monta a fila de instalação
+# evita ciclos pelo visited e duplicatas pelo INSTALL_QUEUE
+queue_deps() {
+    pkg="$1"
+    visited="$2"
+
+    # detecta dependência circular
+    case " $visited " in
+        *" $pkg "*) return ;;
+    esac
+    visited="$visited $pkg"
+
+    binfile="$RECIPES_DIR/$pkg.binfile"
+    if [ ! -f "$binfile" ]; then
+        echo "warning: no recipe found for dependency '$pkg', skipping."
+        return
+    fi
+
+    deps=$(grep "^deps=" "$binfile" | cut -d= -f2)
+    [ -z "$deps" ] && return
+
+    for dep in $deps; do
+        # pula se já tá na fila
+        case " $INSTALL_QUEUE " in
+            *" $dep "*) continue ;;
+        esac
+
+        # resolve as deps do dep antes de adicioná-lo
+        queue_deps "$dep" "$visited"
+
+        # só adiciona à fila se não estiver instalado
+        if [ ! -f "$INSTALLED_DIR/$dep.manifest" ]; then
+            INSTALL_QUEUE="$INSTALL_QUEUE $dep"
+        fi
+    done
 }
 
 # instala um único pacote — chamado em loop pra múltiplos
@@ -41,16 +81,13 @@ install_package() {
 
     cflag=$(tar_flags "$compression") || return 1
 
-    # variáveis pra restauração de conffiles no reinstall
     old_conffiles=""
     backup_dir="/tmp/dumpkg-conf-$$-$pkg"
 
-    # checa se já está instalado
     if [ -f "$INSTALLED_DIR/$pkg.manifest" ]; then
         if [ "$reinstall" = "1" ]; then
             echo "reinstalling $name..."
 
-            # backup dos conffiles antes de remover
             old_conffiles=$(grep "^conffiles=" "$INSTALLED_DIR/$pkg.manifest" | cut -d= -f2)
             for cf in $old_conffiles; do
                 cf_norm=$(echo "$cf" | sed 's|^/||')
@@ -60,7 +97,6 @@ install_package() {
                 cp "/$cf_norm" "$dest"
             done
 
-            # remove os arquivos da instalação atual
             fileslist="$FILES_DIR/$pkg.files"
             if [ -f "$fileslist" ]; then
                 while IFS= read -r file; do
@@ -132,7 +168,6 @@ install_package() {
         sh -c "$postinstall" || echo "warning: post-install failed, but the package is installed."
     fi
 
-    # restaura conffiles se foi reinstall
     if [ -n "$old_conffiles" ] && [ -d "$backup_dir" ]; then
         for cf in $old_conffiles; do
             cf_norm=$(echo "$cf" | sed 's|^/||')
@@ -169,22 +204,49 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# detecta flag de reinstall antes de processar os pacotes
+# processa flags — aceita combinações como -r -d ou -d -r
 reinstall=0
-case "$1" in
-    --reinstall|-r)
-        reinstall=1
-        shift
-        ;;
-esac
+depinst=0
+while true; do
+    case "$1" in
+        --reinstall|-r) reinstall=1; shift ;;
+        --depinst|-d)   depinst=1;   shift ;;
+        *) break ;;
+    esac
+done
 
-[ -z "$1" ] && echo "usage: dumpkg-install [--reinstall|-r] <package> [package...]" && exit 1
+[ -z "$1" ] && echo "usage: dumpkg-install [--reinstall|-r] [--depinst|-d] <package> [package...]" && exit 1
 
 acquire_lock
 
 failed=0
-for pkg in "$@"; do
-    install_package "$pkg" "$reinstall" || failed=$((failed + 1))
-done
+
+if [ "$depinst" = "1" ]; then
+    # monta a fila completa de todos os pacotes pedidos antes de instalar qualquer coisa
+    INSTALL_QUEUE=""
+    for pkg in "$@"; do
+        # resolve as deps do pacote
+        queue_deps "$pkg" ""
+        # adiciona o próprio pacote à fila se não estiver nela e não instalado
+        case " $INSTALL_QUEUE " in
+            *" $pkg "*) ;;
+            *) [ ! -f "$INSTALLED_DIR/$pkg.manifest" ] && INSTALL_QUEUE="$INSTALL_QUEUE $pkg" ;;
+        esac
+    done
+
+    if [ -n "$INSTALL_QUEUE" ]; then
+        echo "install order:$INSTALL_QUEUE"
+        echo ""
+        for pkg in $INSTALL_QUEUE; do
+            install_package "$pkg" "$reinstall" || failed=$((failed + 1))
+        done
+    else
+        echo "all packages are already installed."
+    fi
+else
+    for pkg in "$@"; do
+        install_package "$pkg" "$reinstall" || failed=$((failed + 1))
+    done
+fi
 
 [ "$failed" -gt 0 ] && echo "$failed package(s) failed to install."
