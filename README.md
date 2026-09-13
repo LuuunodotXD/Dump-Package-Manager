@@ -6,7 +6,7 @@ Works through recipes (`.binfile`), with no dependency resolution — deps are l
 ## dependencies
 
 - `sh`, `tar`, `grep`, `cut`, `sed`, `sort`, `awk`, `mkdir`, `rm`, `cp`, `date`, `id`, `kill` — all standard busybox
-- `wget` or `curl` — for downloading (busybox include wget)
+- `wget` or `curl` — for downloading (busybox includes wget)
 - `md5sum` / `sha256sum` — if checksum is enabled (busybox includes both)
 
 ## installation
