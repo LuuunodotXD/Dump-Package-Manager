@@ -83,6 +83,63 @@ cmd_search() {
     [ "$found" -eq 0 ] && echo "no packages found matching '$query'."
 }
 
+# mostra a árvore de dependências recursivamente
+show_tree() {
+    pkg="$1"
+    prefix="$2"
+    cont="$3"
+    visited="$4"
+
+    # detecta dependência circular
+    case " $visited " in
+        *" $pkg "*)
+            printf "%s%s (circular)\n" "$prefix" "$pkg"
+            return
+            ;;
+    esac
+
+    printf "%s%s\n" "$prefix" "$pkg"
+
+    binfile="$RECIPES_DIR/$pkg.binfile"
+    [ ! -f "$binfile" ] && return
+
+    deps=$(grep "^deps=" "$binfile" | cut -d= -f2)
+    [ -z "$deps" ] && return
+
+    visited="$visited $pkg"
+
+    # conta quantas deps tem pra saber quando usar └── ou ├──
+    set -- $deps
+    total=$#
+    i=0
+    for dep in "$@"; do
+        i=$((i + 1))
+        if [ "$i" -eq "$total" ]; then
+            show_tree "$dep" "${cont}└── " "${cont}    " "$visited"
+        else
+            show_tree "$dep" "${cont}├── " "${cont}│   " "$visited"
+        fi
+    done
+}
+
+# exibe a árvore de dependências de um pacote
+cmd_deptree() {
+    [ -z "$1" ] && echo "usage: dumpkg deptree <package>" && exit 1
+    pkg="$1"
+
+    if ! ls "$RECIPES_DIR"/*.binfile >/dev/null 2>&1; then
+        echo "no recipes found. run 'dumpkg-update' to fetch them."
+        return
+    fi
+
+    if [ ! -f "$RECIPES_DIR/$pkg.binfile" ]; then
+        echo "error: no recipe found for '$pkg'."
+        exit 1
+    fi
+
+    show_tree "$pkg" "" "" ""
+}
+
 # lista dependências de um pacote (só informativo, não instala)
 cmd_deps() {
     [ -z "$1" ] && echo "usage: dumpkg deps <package>" && exit 1
@@ -127,7 +184,7 @@ cmd_info() {
         while IFS= read -r file; do
             [ -z "$file" ] && continue
             [ -f "/$file" ] || continue
-            size=$(wc -c < "/$file" 2>/dev/null)
+            size=$(wc -c < "/$file" 2>/dev/null | awk '{print $1}')
             total=$((total + size))
         done < "$fileslist"
         if [ "$total" -ge 1048576 ]; then
@@ -176,7 +233,7 @@ cmd_verify() {
             echo "missing: /$file"
             missing=$((missing + 1))
         elif [ -f "/$file" ]; then
-            size=$(wc -c < "/$file" 2>/dev/null)
+            size=$(wc -c < "/$file" 2>/dev/null | awk '{print $1}')
             total=$((total + size))
         fi
     done < "$fileslist"
@@ -245,6 +302,7 @@ check_setup
 case "$1" in
     list)    cmd_list "$2" ;;
     search)  cmd_search "$2" ;;
+    deptree) cmd_deptree "$2" ;;
     deps)    cmd_deps "$2" ;;
     info)    cmd_info "$2" ;;
     verify)  cmd_verify "$2" ;;
@@ -257,6 +315,7 @@ case "$1" in
         echo "  list                  list all installed packages and versions"
         echo "  list --upgradable     list packages with a newer version available"
         echo "  search <pkg>          search for a package in the repo (substring match)"
+        echo "  deptree <pkg>         show the full dependency tree of a package"
         echo "  deps <pkg>            show the dependencies of a package"
         echo "  info <pkg>            show local info for an installed package"
         echo "  verify <pkg>          check if all files of a package are present"
