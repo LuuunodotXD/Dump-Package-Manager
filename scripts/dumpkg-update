@@ -200,9 +200,12 @@ case "$1" in
         sync_recipes
         ;;
     --upgrade|-U)
-        # atualiza um pacote específico ou todos
+        # atualiza um ou mais pacotes específicos, ou todos
         if [ -n "$2" ]; then
-            upgrade_package "$2"
+            shift
+            for pkg in "$@"; do
+                upgrade_package "$pkg"
+            done
         else
             upgrade_all
         fi
