@@ -1,12 +1,12 @@
 # dumpkg
 
 A minimal binary package manager for musl + busybox systems, written in POSIX shell.  
-Works through recipes (`.binfile`), with no dependency resolution — deps are listed for reference only.
+Works through recipes (`.binfile`), with optional dependency resolution.
 
 ## dependencies
 
 - `sh`, `tar`, `grep`, `cut`, `sed`, `sort`, `awk`, `mkdir`, `rm`, `cp`, `date`, `id`, `kill` — all standard busybox
-- `wget` or `curl` — for downloading
+- `wget` or `curl` — for downloading (busybox includes wget)
 - `md5sum` / `sha256sum` — if checksum is enabled (busybox includes both)
 
 ## installation
@@ -42,6 +42,7 @@ dumpkg clean                     # remove leftover temp files and stale locks
 
 dumpkg-install <pkg> [pkg...]    # install one or more packages
 dumpkg-install -r <pkg> [pkg...] # reinstall (--reinstall)
+dumpkg-install -d <pkg> [pkg...] # install resolving dependencies
 
 dumpkg-remove <pkg> [pkg...]     # remove one or more packages
 
