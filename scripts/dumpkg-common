@@ -32,7 +32,7 @@ download() {
     dest="$2"
     case "$(conf_get downloader)" in
         curl) curl -fsSL -o "$dest" "$url" ;;
-        wget) wget -q -O "$dest" "$url" ;;
+        wget) wget -O "$dest" "$url" ;; # remover o -q para evitar erros com o toybox
         *) echo "error: unknown downloader in config. use 'curl' or 'wget'."; exit 1 ;;
     esac
 }
