@@ -5,9 +5,9 @@ Works through recipes (`.binfile`), with optional dependency resolution.
 
 ## dependencies
 
-- `sh`, `tar`, `grep`, `cut`, `sed`, `sort`, `awk`, `mkdir`, `rm`, `cp`, `date`, `id`, `kill` — all standard busybox
-- `wget` or `curl` — for downloading (busybox includes wget)
-- `md5sum` / `sha256sum` — if checksum is enabled (busybox includes both)
+- `sh`, `tar`, `grep`, `cut`, `sed`, `sort`, `awk`, `mkdir`, `rm`, `cp`, `date`, `id`, `kill` — all standard busybox;
+- `wget` or `curl` — for downloading (busybox includes wget);
+- `md5sum` / `sha256sum` — if checksum is enabled (busybox includes both).
 
 ## installation
 
