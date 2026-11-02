@@ -21,37 +21,40 @@ tar_flags() {
 # resolve deps recursivamente e monta a fila de instalação
 # evita ciclos pelo visited e duplicatas pelo INSTALL_QUEUE
 queue_deps() {
-    pkg="$1"
-    visited="$2"
-
-    # detecta dependência circular
-    case " $visited " in
-        *" $pkg "*) return ;;
+    # $1 = pacote, $2 = pacotes ja visitados (evita ciclos).
+    # Sem "local" (nao eh POSIX): as variaveis de estado vivem nos parametros
+    # posicionais, que sao privados de cada chamada, assim a recursao nao
+    # bagunca o loop de quem chamou.
+    case " $2 " in
+        *" $1 "*) return ;;
     esac
-    visited="$visited $pkg"
 
-    binfile="$RECIPES_DIR/$pkg.binfile"
-    if [ ! -f "$binfile" ]; then
-        echo "warning: no recipe found for dependency '$pkg', skipping."
+    if [ ! -f "$RECIPES_DIR/$1.binfile" ]; then
+        echo "warning: no recipe found for dependency '$1', skipping."
         return
     fi
 
-    deps=$(grep "^deps=" "$binfile" | cut -d= -f2)
-    [ -z "$deps" ] && return
+    _qd_deps=$(grep "^deps=" "$RECIPES_DIR/$1.binfile" | cut -d= -f2)
+    [ -z "$_qd_deps" ] && return
 
-    for dep in $deps; do
-        # pula se já tá na fila
+    # monta a lista de trabalho: visitados primeiro, depois as deps
+    set -- "$2 $1" $_qd_deps
+
+    while [ $# -gt 1 ]; do
+        # pula se ja esta na fila
         case " $INSTALL_QUEUE " in
-            *" $dep "*) continue ;;
+            *" $2 "*) ;;
+            *)
+                # resolve as deps da dep antes de adiciona-la
+                queue_deps "$2" "$1"
+                # so entra na fila se ainda nao estiver instalada
+                [ ! -f "$INSTALLED_DIR/$2.manifest" ] && INSTALL_QUEUE="$INSTALL_QUEUE $2"
+                ;;
         esac
-
-        # resolve as deps do dep antes de adicioná-lo
-        queue_deps "$dep" "$visited"
-
-        # só adiciona à fila se não estiver instalado
-        if [ ! -f "$INSTALLED_DIR/$dep.manifest" ]; then
-            INSTALL_QUEUE="$INSTALL_QUEUE $dep"
-        fi
+        # tira a dep ja tratada, mantendo os visitados em $1
+        _qd_vis="$1"
+        shift 2
+        set -- "$_qd_vis" "$@"
     done
 }
 
