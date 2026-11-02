@@ -184,7 +184,7 @@ cmd_info() {
         while IFS= read -r file; do
             [ -z "$file" ] && continue
             [ -f "/$file" ] || continue
-            size=$(wc -c < "/$file" 2>/dev/null | awk '{print $1}')
+            size=$(wc -c < "/$file" 2>/dev/null | tr -d ' ')
             total=$((total + size))
         done < "$fileslist"
         if [ "$total" -ge 1048576 ]; then
@@ -233,7 +233,7 @@ cmd_verify() {
             echo "missing: /$file"
             missing=$((missing + 1))
         elif [ -f "/$file" ]; then
-            size=$(wc -c < "/$file" 2>/dev/null | awk '{print $1}')
+            size=$(wc -c < "/$file" 2>/dev/null | tr -d ' ')
             total=$((total + size))
         fi
     done < "$fileslist"
