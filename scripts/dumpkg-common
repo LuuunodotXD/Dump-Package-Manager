@@ -80,7 +80,14 @@ fetch_size() {
     url="$1"
     bytes=""
     case "$(conf_get downloader)" in
-        curl) bytes=$(curl -sIL "$url" | grep -i "^content-length:" | tail -1 | tr -d '\r' | cut -d: -f2 | tr -d ' ') ;;
+        curl)
+            # pega o numero depois de "content-length:" so com o proprio shell
+            # (sem awk nem tr): o "set --" separa as palavras e o %"$cr" tira o \r
+            bytes=$(curl -sIL "$url" | grep -i "^content-length:" | tail -1 | cut -d: -f2)
+            cr=$(printf '\r')
+            set -- $bytes
+            bytes=${1%"$cr"}
+            ;;
         wget) ;; # busybox wget doesn't reliably report size without interfering with downloads
     esac
     [ -z "$bytes" ] && return
